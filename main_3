@@ -5,11 +5,9 @@ import time
 import os
 from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, 
                              QPushButton, QLabel, QFileDialog, QInputDialog, 
-                             QMessageBox, QGroupBox, QRubberBand, QCheckBox) # QCheckBox 추가
-# [핵심 1] PyQt 한글 폰트를 위해 QFont 임포트
+                             QMessageBox, QGroupBox, QRubberBand, QCheckBox)
 from PyQt5.QtGui import QImage, QPixmap, QPainter, QPen, QFont 
 from PyQt5.QtCore import QThread, pyqtSignal, Qt, QSize, QRect, QPoint
-# [핵심 2] OpenCV 한글 처리를 위한 PIL(Pillow) 라이브러리 임포트
 try:
     from PIL import Image, ImageDraw, ImageFont
 except ImportError:
@@ -17,42 +15,34 @@ except ImportError:
     sys.exit()
 
 
-# --- [핵심 2] 한글 폰트 경로 설정 ---
-# [고객님 설정 유지] "HMKMRHD.TTF"
+# --- 한글 폰트 경로 설정 ---
 DEFAULT_FONT_PATH = "HMKMRHD.TTF"
 
 def get_korean_font(size=20):
     """시스템 경로에서 한글 폰트(TTF)를 로드합니다. (PIL용)"""
     font_path = DEFAULT_FONT_PATH
     
-    # [대체 경로 탐색]
     if not os.path.exists(font_path):
         print(f"경고: 지정된 폰트 '{font_path}'를 찾을 수 없습니다. 대체 경로 탐색을 시작합니다.")
         if sys.platform == "win32":
             font_path = "C:/Windows/Fonts/malgun.ttf"
             if not os.path.exists(font_path):
-                 font_path = "C:/Windows/Fonts/gulim.ttc" # 굴림 (대체)
-        elif sys.platform == "darwin": # macOS
+                 font_path = "C:/Windows/Fonts/gulim.ttc"
+        elif sys.platform == "darwin":
             font_path = "/System/Library/Fonts/Supplemental/AppleSDGothicNeo.ttf"
         elif sys.platform == "linux":
-            # 흔한 리눅스 경로 (다를 수 있음)
             font_path = "/usr/share/fonts/truetype/nanum/NanumGothicBold.ttf"
             if not os.path.exists(font_path):
                 font_path = "/usr/share/fonts/truetype/nanum/NanumGothic.ttf"
-                if not os.path.exists(font_path):
-                    font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf" # 한글 안될 수 있음
-        
+    
     try:
-        # 폰트 로드 시도
         print(f"PIL 폰트 로드 시도: {font_path}")
         return ImageFont.truetype(font_path, size)
     except IOError:
         print(f"경고: 한글 폰트 '{font_path}'를 찾을 수 없습니다. PIL 기본 폰트를 사용합니다.")
-        # Pillow 기본 폰트 (한글 깨짐)
         try:
             return ImageFont.load_default()
         except Exception:
-            print("PIL 기본 폰트 로드도 실패했습니다.")
             return None
 
 # 상수: GUI에 표시될 영상의 기본 크기
@@ -65,7 +55,7 @@ class VideoThread(QThread):
     """
     change_pixmap_signal = pyqtSignal(np.ndarray)
     camera_started_signal = pyqtSignal(int, int) 
-    brightness_update_signal = pyqtSignal(int) # 밝기 값 GUI 업데이트용 신호
+    brightness_update_signal = pyqtSignal(int)
 
     def __init__(self, camera_index=0):
         super().__init__()
@@ -73,34 +63,30 @@ class VideoThread(QThread):
         self._running = True
         self._paused = False
         
-        self._classify_mode = 'none' # 'none', 'mono_defect', 'color_part'
+        self._classify_mode = 'none'
         
         self.view_rect = None 
         self.original_width = 0
         self.original_height = 0
         
-        # [수정] 소프트웨어 밝기 제어
         self._brightness = 0
         self._brightness_delta = 0
         
-        # --- [신규] 영상 필터 플래그 ---
-        self._apply_wb = False      # 화이트 밸런스 (노란기 제거)
-        self._apply_denoise = False # 노이즈 제거
-        self._apply_sharpen = False # 선명하게
+        self._apply_wb = False
+        self._apply_denoise = False
+        self._apply_sharpen = False
         
         self.kernel_sharpen = np.array([[-1,-1,-1],
                                         [-1, 9,-1],
                                         [-1,-1,-1]])
         
-        # --- [신규] 일시정지 버그 수정을 위한 마지막 프레임 저장 ---
         self.last_good_frame = None
         
-        # PIL 폰트 객체 미리 로드
         self.font_large = get_korean_font(size=24)
         self.font_small = get_korean_font(size=16)
 
     def run(self):
-        """스레드 실행: 카메라 캡쳐 및 프레임 처리 루프"""
+        """스레드 실행: 카메라 캡쳐 및 프레임 처리 루프 (일시정지 수정됨)"""
         cap = cv2.VideoCapture(self.camera_index)
         
         if not cap.isOpened():
@@ -117,16 +103,12 @@ class VideoThread(QThread):
         self.camera_started_signal.emit(self.original_width, self.original_height)
 
         while self._running:
-            # [수정] 일시정지 상태가 아닐 때만 새 프레임을 읽음
             if not self._paused:
                 ret, original_frame = cap.read() 
                 if ret:
-                    # 마지막으로 성공한 프레임을 저장
                     self.last_good_frame = original_frame.copy()
             
-            # [수정] 일시정지 여부와 관계없이, 마지막 프레임이 존재하면 처리를 계속함
             if self.last_good_frame is not None:
-                # 마지막 프레임의 복사본으로 모든 처리를 시작
                 current_frame = self.last_good_frame.copy()
 
                 # --- [1] 소프트웨어 밝기 조절 로직 ---
@@ -142,11 +124,11 @@ class VideoThread(QThread):
                 else:
                     adjusted_frame = current_frame
                 
-                # --- [신규] 영상 필터 적용 ---
+                # --- 영상 필터 적용 ---
                 if self._apply_wb:
                     adjusted_frame = self.correct_white_balance(adjusted_frame)
                 if self._apply_denoise:
-                    adjusted_frame = cv2.medianBlur(adjusted_frame, 5) # ksize=5
+                    adjusted_frame = cv2.medianBlur(adjusted_frame, 5)
                 if self._apply_sharpen:
                     adjusted_frame = cv2.filter2D(adjusted_frame, -1, self.kernel_sharpen)
 
@@ -227,10 +209,6 @@ class VideoThread(QThread):
             
     # --- [검사 로직 1] 흑백(SEM) 이미지용 (흑백 뷰 + CLAHE 분석) ---
     def run_defect_detection_mono(self, frame):
-        """ 
-        [흑백 전용] OpenCV 임계값 및 컨투어 분석 기반 결함 검출
-        """
-        
         DEFECT_THRESHOLD = 50 
         MIN_AREA = 20
         CIRCULARITY_THRESHOLD = 0.6 
@@ -240,12 +218,10 @@ class VideoThread(QThread):
         gray_analyzed = clahe.apply(gray)
         frame_to_display = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
         
-        # [수정] gray -> gray_analyzed (극대화된 이미지로 분석)
         _, defect_mask = cv2.threshold(gray_analyzed, DEFECT_THRESHOLD, 255, cv2.THRESH_BINARY_INV)
         
         kernel = np.ones((3, 3), np.uint8)
         mask_opened = cv2.morphologyEx(defect_mask, cv2.MORPH_OPEN, kernel, iterations=1)
-        
         contours, _ = cv2.findContours(mask_opened, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         
         void_count = 0
@@ -268,12 +244,10 @@ class VideoThread(QThread):
                     crack_count += 1
                     color_bgr = (0, 0, 255)
                     cv2.drawContours(frame_to_display, [cnt], -1, color_bgr, 2)
-
         try:
             frame_rgb_with_boxes = cv2.cvtColor(frame_to_display, cv2.COLOR_BGR2RGB)
             pil_img = Image.fromarray(frame_rgb_with_boxes)
             draw = ImageDraw.Draw(pil_img)
-
             text_void = f"보이드: {void_count} 개"
             text_crack = f"크랙: {crack_count} 개"
             
@@ -288,12 +262,6 @@ class VideoThread(QThread):
 
     # --- [검사 로직 2] 컬러(현미경) 이미지용 ---
     def run_defect_detection_color(self, frame):
-        """ 
-        [컬러 전용] 
-        - (작업 1) HSV 색상 공간을 사용해 '필러' 검출
-        - (작업 2) Grayscale 임계값을 사용해 '보이드/크랙' 검출
-        """
-        
         PART_LOWER_H = 20
         PART_LOWER_S = 100
         PART_LOWER_V = 100
@@ -301,7 +269,6 @@ class VideoThread(QThread):
         PART_UPPER_S = 255
         PART_UPPER_V = 255
         MIN_PART_AREA = 500
-        
         DEFECT_THRESHOLD = 60
         MIN_DEFECT_AREA = 20
         CIRCULARITY_THRESHOLD = 0.6
@@ -327,7 +294,7 @@ class VideoThread(QThread):
             if cv2.contourArea(cnt) > MIN_PART_AREA:
                 part_count += 1
                 x, y, w, h = cv2.boundingRect(cnt)
-                cv2.rectangle(frame, (x, y), (x+w, y+h), (255, 0, 0), 2) # BGR (파랑)
+                cv2.rectangle(frame, (x, y), (x+w, y+h), (255, 0, 0), 2)
 
         # [작업 2] 어두운 결함 검출 (Grayscale)
         _, defect_mask = cv2.threshold(gray, DEFECT_THRESHOLD, 255, cv2.THRESH_BINARY_INV)
@@ -364,10 +331,10 @@ class VideoThread(QThread):
             text_void = f"보이드: {void_count} 개"
             text_crack = f"크랙: {crack_count} 개"
             
-            if self.font_small: # (font_small 사용)
-                draw.text((20, 30), text_part, font=self.font_small, fill=(0, 0, 255)) # RGB (파랑)
-                draw.text((20, 60), text_void, font=self.font_small, fill=(0, 255, 0)) # RGB (초록)
-                draw.text((20, 90), text_crack, font=self.font_small, fill=(255, 0, 0)) # RGB (빨강)
+            if self.font_small:
+                draw.text((20, 30), text_part, font=self.font_small, fill=(0, 0, 255))
+                draw.text((20, 60), text_void, font=self.font_small, fill=(0, 255, 0))
+                draw.text((20, 90), text_crack, font=self.font_small, fill=(255, 0, 0))
 
             return cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
 
@@ -382,9 +349,7 @@ class MicroscopeApp(QWidget):
         super().__init__()
         
         self.thread = None
-        self.current_pixmap = None # 현재 화면에 표시된 (그림이 포함된) 픽스맵
-        
-        # --- [신규] 돋보기/일시정지 버그 수정을 위해 '깨끗한 원본' 픽스맵 추가 ---
+        self.current_pixmap = None 
         self.clean_pixmap = None   # 스레드에서 막 받은 '깨끗한' 원본 픽스맵
         
         self.original_width = 0
@@ -398,16 +363,13 @@ class MicroscopeApp(QWidget):
         self.current_points = [] # 현재 그리는 점 (최대 2개)
         self.calibration_points = [] # 보정용 점 (최대 2개)
         self.measurement_lines = [] # (p1, p2, text) 튜플의 리스트
-        self.px_per_mm_calibration = None # 줌 보정 변수
+        self.px_per_mm_calibration = None
         # -----------------------------
 
         self.drag_start_point = None
-        
-        # --- [신규] 돋보기 ---
         self.loupe_label = None
-        # -------------------
 
-        self.setWindowTitle("시편 분석 프로그램(VER 1.4)") # (버전 업)
+        self.setWindowTitle("시편 분석 프로그램(VER 1.5)") # (버전 업)
         self.init_ui()
 
     def init_ui(self):
@@ -418,20 +380,17 @@ class MicroscopeApp(QWidget):
         self.video_label.setStyleSheet("background-color: #000; border: 1px solid #555;")
         self.video_label.setText("카메라 꺼짐")
         self.video_label.setAlignment(Qt.AlignCenter)
-        # --- [핵심 수정] 돋보기가 작동하도록 마우스 추적 활성화 ---
+        # --- [핵심 수정] 돋보기를 위한 마우스 추적 활성화 ---
         self.video_label.setMouseTracking(True)
-        # ---------------------------------------------------
         main_layout.addWidget(self.video_label)
         
         self.rubber_band = QRubberBand(QRubberBand.Rectangle, self.video_label)
         
-        # --- [신규] 돋보기 라벨 ---
         self.loupe_label = QLabel(self.video_label)
         self.loupe_label.setFixedSize(100, 100)
         self.loupe_label.setStyleSheet("border: 2px solid cyan; background-color: black;")
         self.loupe_label.setAlignment(Qt.AlignCenter)
         self.loupe_label.hide()
-        # --------------------------
 
         # --- 오른쪽: 컨트롤 패널 ---
         control_layout = QVBoxLayout()
@@ -441,11 +400,11 @@ class MicroscopeApp(QWidget):
         cam_layout = QHBoxLayout()
         self.btn_toggle_cam = QPushButton("켜기/끄기 (Ctrl+O)")
         self.btn_toggle_cam.clicked.connect(self.toggle_camera)
-        self.btn_toggle_cam.setShortcut("Ctrl+O")
+        # self.btn_toggle_cam.setShortcut("Ctrl+O") # [제거] keyPressEvent로 이동
         
         self.btn_pause = QPushButton("일시정지 (F1)")
         self.btn_pause.clicked.connect(self.pause_video)
-        self.btn_pause.setShortcut("F1")
+        # self.btn_pause.setShortcut("F1") # [제거] keyPressEvent로 이동
         self.btn_pause.setEnabled(False)
         
         cam_layout.addWidget(self.btn_toggle_cam)
@@ -453,7 +412,7 @@ class MicroscopeApp(QWidget):
         cam_group.setLayout(cam_layout)
         control_layout.addWidget(cam_group)
         
-        # [수정] 1.5. 밝기 제어
+        # 1.5. 밝기 제어
         brt_group = QGroupBox("밝기 제어")
         brt_layout = QVBoxLayout() 
         brt_buttons_layout = QHBoxLayout()
@@ -478,7 +437,7 @@ class MicroscopeApp(QWidget):
         brt_group.setLayout(brt_layout)
         control_layout.addWidget(brt_group)
         
-        # --- [신규] 1.6. 영상 필터 ---
+        # 1.6. 영상 필터
         filter_group = QGroupBox("영상 필터")
         filter_layout = QVBoxLayout()
         
@@ -500,22 +459,21 @@ class MicroscopeApp(QWidget):
         
         filter_group.setLayout(filter_layout)
         control_layout.addWidget(filter_group)
-        # --- 필터 끝 ---
 
         # 2. 줌 제어
         zoom_group = QGroupBox("줌 제어")
         zoom_layout = QHBoxLayout()
-        self.btn_zoom_in = QPushButton("확대(Ctrl+↑)")
+        self.btn_zoom_in = QPushButton("확대(Ctrl+I)")
         self.btn_zoom_in.clicked.connect(self.zoom_in_button)
-        self.btn_zoom_in.setShortcut("Ctrl+Up")
+        # self.btn_zoom_in.setShortcut("Ctrl+8") # [제거]
         
-        self.btn_zoom_out = QPushButton("축소(Ctrl+↓)")
+        self.btn_zoom_out = QPushButton("축소(Ctrl+K)")
         self.btn_zoom_out.clicked.connect(self.zoom_out_button)
-        self.btn_zoom_out.setShortcut("Ctrl+Down")
+        # self.btn_zoom_out.setShortcut("Ctrl+2") # [제거]
         
-        self.btn_zoom_reset = QPushButton("줌 리셋(Ctrl+0)")
+        self.btn_zoom_reset = QPushButton("줌 리셋(Ctrl+J)")
         self.btn_zoom_reset.clicked.connect(self.reset_zoom)
-        self.btn_zoom_reset.setShortcut("Ctrl+0")
+        # self.btn_zoom_reset.setShortcut("Ctrl+5") # [제거]
         
         zoom_layout.addWidget(self.btn_zoom_in)
         zoom_layout.addWidget(self.btn_zoom_out)
@@ -528,11 +486,11 @@ class MicroscopeApp(QWidget):
         func_layout = QVBoxLayout()
         self.btn_capture = QPushButton("이미지 캡쳐 (Ctrl+S)")
         self.btn_capture.clicked.connect(self.capture_image)
-        self.btn_capture.setShortcut("Ctrl+S")
+        # self.btn_capture.setShortcut("Ctrl+S") # [제거]
         
         self.btn_classify = QPushButton("부품 검사 (Ctrl+D)")
         self.btn_classify.clicked.connect(self.toggle_classification)
-        self.btn_classify.setShortcut("Ctrl+D")
+        # self.btn_classify.setShortcut("Ctrl+D") # [제거]
         
         func_layout.addWidget(self.btn_capture)
         func_layout.addWidget(self.btn_classify)
@@ -540,27 +498,25 @@ class MicroscopeApp(QWidget):
         control_layout.addWidget(func_group)
         
         # 4. 거리 측정 / 줌 모드
-        measure_group = QGroupBox("측정 / 마우스 모드(+Shift, 직교모드)")
+        measure_group = QGroupBox("측정 / 마우스 모드")
         measure_layout = QVBoxLayout()
 
         self.btn_zoom_mode = QPushButton("현재 모드: 줌 (Ctrl+Z)")
         self.btn_zoom_mode.clicked.connect(self.toggle_zoom_mode)
-        self.btn_zoom_mode.setShortcut("Ctrl+Z")
+        # self.btn_zoom_mode.setShortcut("Ctrl+Z") # [제거]
         self.btn_zoom_mode.setCheckable(True)
         self.btn_zoom_mode.setChecked(True) 
         
         self.btn_calibrate = QPushButton("기준 길이 설정 (Ctrl+R)")
         self.btn_calibrate.clicked.connect(self.start_calibration)
-        self.btn_calibrate.setShortcut("Ctrl+R")
+        # self.btn_calibrate.setShortcut("Ctrl+R") # [제거]
         
         self.btn_measure = QPushButton("거리 측정 시작 (Ctrl+M)")
         self.btn_measure.clicked.connect(self.start_measurement)
-        self.btn_measure.setShortcut("Ctrl+M")
+        # self.btn_measure.setShortcut("Ctrl+M") # [제거]
         
-        # --- [신규] 측정 리셋 버튼 ---
         self.btn_reset_measure = QPushButton("측정 리셋")
         self.btn_reset_measure.clicked.connect(self.reset_measurement)
-        # -----------------------------
         
         self.info_label = QLabel("상태: 대기 중")
         self.info_label.setStyleSheet("border: 1px solid #ccc; padding: 5px; min-height: 40px;")
@@ -571,7 +527,7 @@ class MicroscopeApp(QWidget):
         measure_layout.addWidget(self.btn_zoom_mode)
         measure_layout.addWidget(self.btn_calibrate)
         measure_layout.addWidget(self.btn_measure)
-        measure_layout.addWidget(self.btn_reset_measure) # [신규] 리셋 버튼 추가
+        measure_layout.addWidget(self.btn_reset_measure)
         measure_layout.addWidget(self.info_label)
         measure_group.setLayout(measure_layout)
         control_layout.addWidget(measure_group)
@@ -640,8 +596,8 @@ class MicroscopeApp(QWidget):
             self.original_width = 0
             self.original_height = 0
             self.current_view_rect = None
-            self.clean_pixmap = None # [신규]
-            self.current_pixmap = None # [신규]
+            self.clean_pixmap = None
+            self.current_pixmap = None
 
     def on_camera_started(self, width, height):
         self.original_width = width
@@ -655,17 +611,9 @@ class MicroscopeApp(QWidget):
         rgb_image = cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB)
         h, w, ch = rgb_image.shape
         bytes_per_line = ch * w
-        
         qt_image = QImage(rgb_image.data, w, h, bytes_per_line, QImage.Format_RGB888)
-        
-        # [수정] 
-        # 1. 스레드에서 받은 원본을 '깨끗한' 픽스맵으로 저장
         self.clean_pixmap = QPixmap.fromImage(qt_image)
-        
-        # 2. 현재 상태(점/선)를 깨끗한 픽스맵 위에 그림
         self.draw_measurement_lines()
-        
-        # 3. 최종 결과물(self.current_pixmap)을 화면에 표시
         self.video_label.setPixmap(self.current_pixmap)
 
     def update_brightness_label(self, value):
@@ -799,12 +747,12 @@ class MicroscopeApp(QWidget):
         self.update_mode_style()
         self.is_calibrating = False
         self.is_measuring = False
-        self.current_points = [] # [수정]
-        self.calibration_points = [] # [수정]
+        self.current_points = []
+        self.calibration_points = []
         self.drag_start_point = None
         self.rubber_band.hide()
         self.loupe_label.hide()
-        self.force_redraw() # [신규] 화면 갱신
+        self.force_redraw()
 
     def update_mode_style(self):
         if self.is_zoom_mode:
@@ -833,7 +781,6 @@ class MicroscopeApp(QWidget):
         if self.is_zoom_mode and self.drag_start_point is not None:
             self.rubber_band.setGeometry(QRect(self.drag_start_point, event.pos()).normalized())
         
-        # [신규] 측정/보정 모드에서 마우스 이동 시 돋보기 업데이트
         if not self.is_zoom_mode and (self.is_calibrating or self.is_measuring) and self.thread is not None:
             self.update_loupe(event.pos())
 
@@ -858,57 +805,46 @@ class MicroscopeApp(QWidget):
             self.apply_new_view_rect(new_x, new_y, new_w, new_h)
             self.resume_if_paused()
             
-    # [신규] 마우스가 라벨을 떠나면 돋보기 숨기기
     def video_label_mouse_leave(self, event):
         self.loupe_label.hide()
         
-    # [신규] 돋보기 업데이트 함수
     def update_loupe(self, pos):
-        # [수정] current_pixmap -> clean_pixmap
         if self.clean_pixmap is None:
             return
         
-        loupe_size = 100 # 돋보기 라벨 크기
-        # [수정] 40 -> 60 (확대율을 낮추고 화질 개선)
-        grab_size = 60   # 원본에서 가져올 픽셀 영역 크기
+        loupe_size = 100
+        grab_size = 60 # [수정] 40 -> 60
         
-        # 1. 원본 픽스맵에서 마우스 주변 영역 가져오기
         grab_rect = QRect(pos.x() - grab_size // 2, pos.y() - grab_size // 2, grab_size, grab_size)
         
-        # 2. 픽셀화(FastTransformation)하여 확대
-        # [수정] current_pixmap -> clean_pixmap
-        # [수정] Qt.FastTransformation -> Qt.SmoothTransformation (깨짐 현상 개선)
+        # [수정] Qt.SmoothTransformation
         loupe_pixmap = self.clean_pixmap.copy(grab_rect).scaled(
             loupe_size, loupe_size, 
             Qt.KeepAspectRatio, 
-            Qt.SmoothTransformation # 픽셀이 보이도록 NearestNeighbor 방식 사용
+            Qt.SmoothTransformation
         )
         
-        # 3. 십자선(Crosshair) 그리기
         painter = QPainter(loupe_pixmap)
         painter.setPen(QPen(Qt.cyan, 1))
-        # (정중앙 픽셀을 정확히 가리키도록 1px 오프셋 조정)
-        painter.drawLine(loupe_size // 2, 0, loupe_size // 2, loupe_size) # 수직
-        painter.drawLine(0, loupe_size // 2, loupe_size, loupe_size // 2) # 수평
+        painter.drawLine(loupe_size // 2, 0, loupe_size // 2, loupe_size)
+        painter.drawLine(0, loupe_size // 2, loupe_size, loupe_size // 2)
         painter.end()
         
-        # 4. 돋보기 라벨에 적용 및 위치 이동
         self.loupe_label.setPixmap(loupe_pixmap)
         
-        # [수정] 마우스 커서 옆으로 이동 (오프셋 +15px)
-        # 화면 가장자리를 벗어나지 않도록 경계 처리
+        # [수정] 마우스 커서 옆으로 이동
         new_x = pos.x() + 15
         new_y = pos.y() + 15
         
         if new_x + loupe_size > DISPLAY_WIDTH:
-            new_x = pos.x() - loupe_size - 15 # 커서 왼쪽으로
+            new_x = pos.x() - loupe_size - 15
         if new_y + loupe_size > DISPLAY_HEIGHT:
-            new_y = pos.y() - loupe_size - 15 # 커서 위쪽으로
+            new_y = pos.y() - loupe_size - 15
             
         self.loupe_label.move(new_x, new_y) 
         self.loupe_label.show()
             
-    # --- [수정] 거리 측정 함수 (로직 변경) ---
+    # --- 거리 측정 함수 (줌 보정 로직 포함) ---
     
     def start_calibration(self):
         if self.thread is None: return QMessageBox.warning(self, "경고", "카메라를 먼저 켜주세요.")
@@ -916,9 +852,8 @@ class MicroscopeApp(QWidget):
         
         self.is_calibrating = True
         self.is_measuring = False
-        self.calibration_points = [] # [수정] 보정용 포인트 리스트 초기화
+        self.calibration_points = []
         self.current_points = []
-        # (기존 측정 라인(measurement_lines)은 지우지 않음)
         
         self.info_label.setText(f"[보정 모드 @ {self.get_current_zoom_ratio():.1f}x]\n"
                             "기준 길이의 두 끝점을 클릭하세요. (Shift: 직교)")
@@ -931,12 +866,11 @@ class MicroscopeApp(QWidget):
             
         self.is_calibrating = False
         self.is_measuring = True
-        self.current_points = [] # [수정] 현재 그릴 포인트 리스트 초기화
+        self.current_points = []
         
         self.info_label.setText("[측정 모드] 측정할 두 점을 클릭하세요.")
         self.force_redraw()
         
-    # [신규] 측정 리셋 함수
     def reset_measurement(self):
         self.is_calibrating = False
         self.is_measuring = False
@@ -950,16 +884,14 @@ class MicroscopeApp(QWidget):
         pos = event.pos()
         is_shift_pressed = event.modifiers() & Qt.ShiftModifier
         
-        # [수정] 보정/측정 로직 분리
         target_points = None
         if self.is_calibrating:
             target_points = self.calibration_points
         elif self.is_measuring:
             target_points = self.current_points
         else:
-            return # 측정 모드가 아니면 무시
+            return
 
-        # [수정] (self.is_calibrating or self.is_measuring)
         if (self.is_calibrating or self.is_measuring) and is_shift_pressed and len(target_points) == 1:
             p1 = target_points[0]
             dx, dy = abs(pos.x() - p1.x()), abs(pos.y() - p1.y())
@@ -977,11 +909,9 @@ class MicroscopeApp(QWidget):
         else:
             target_points.append(pos)
         
-        # [수정] 로직 변경
         if len(target_points) == 2:
             self.process_measurement_calculation()
         elif len(target_points) > 2:
-            # 리셋
             if self.is_measuring:
                 self.current_points = [pos]
                 self.info_label.setText("[측정 모드] 다시 시작. 첫 번째 점 클릭됨.")
@@ -992,7 +922,6 @@ class MicroscopeApp(QWidget):
         self.force_redraw()
             
     def process_measurement_calculation(self):
-        # [수정] 보정/측정 로직 분리
         if self.is_calibrating:
             if len(self.calibration_points) != 2: return
             p1, p2 = self.calibration_points
@@ -1033,9 +962,7 @@ class MicroscopeApp(QWidget):
             base_zoom = self.original_width / base_view_w
             current_zoom = self.get_current_zoom_ratio()
             
-            # [신규] 계산된 거리값을 텍스트로 저장
             distance_text = f"{real_distance:.3f} mm"
-            # [신규] 완료된 선 목록에 추가
             self.measurement_lines.append( (p1, p2, distance_text) )
             
             self.info_label.setText(f"[측정 완료 @ {current_zoom:.1f}x]\n"
@@ -1043,9 +970,8 @@ class MicroscopeApp(QWidget):
                                 f"측정 거리: {distance_text} (보정됨)\n"
                                 f"(보정 기준 배율: {base_zoom:.1f}x)")
             
-            self.current_points = [] # [수정] 다음 측정을 위해 현재 포인트 리셋
+            self.current_points = [] # 다음 측정을 위해 현재 포인트 리셋
 
-    # [신규] 화면 강제 갱신용 헬퍼 함수
     def force_redraw(self):
         """현재 clean_pixmap 기준으로 화면을 강제로 다시 그립니다."""
         if self.clean_pixmap:
@@ -1053,30 +979,22 @@ class MicroscopeApp(QWidget):
             self.video_label.setPixmap(self.current_pixmap)
 
     def draw_measurement_lines(self):
-        # [수정] 아키텍처 변경
-        
-        # 1. 깨끗한 원본(clean_pixmap)이 없으면 아무것도 하지 않음
         if self.clean_pixmap is None:
             self.current_pixmap = None
             return
             
-        # 2. 깨끗한 원본을 복사하여 그림 그리기 시작
         pixmap_copy = self.clean_pixmap.copy()
-        painter = QPainter(pixmap_copy)
         
-        # 3. 그릴 점/선이 없으면, 깨끗한 원본을 current_pixmap으로 설정하고 종료
         if not self.calibration_points and not self.current_points and not self.measurement_lines:
             self.current_pixmap = pixmap_copy
-            painter.end()
             return
 
-        # [수정] 폰트 설정
+        painter = QPainter(pixmap_copy)
+        
         font = QFont('Malgun Gothic', 10, QFont.Bold) if 'Malgun Gothic' in QFont().family() else QFont()
         font.setPointSize(10)
         font.setBold(True)
         painter.setFont(font)
-        
-        # --- (이하는 점/선이 있을 경우에만 실행됨) ---
         
         # 4. (신규) 완료된 모든 측정 선(초록색) 그리기
         painter.setPen(QPen(Qt.green, 2, Qt.SolidLine))
@@ -1085,7 +1003,6 @@ class MicroscopeApp(QWidget):
             painter.drawEllipse(p2, 3, 3)
             painter.drawLine(p1, p2)
             
-            # 측정값 텍스트 그리기
             mid_point = QPoint((p1.x() + p2.x()) // 2, (p1.y() + p2.y()) // 2)
             painter.setPen(QPen(Qt.yellow))
             painter.drawText(mid_point.x() + 5, mid_point.y() - 5, text)
@@ -1105,13 +1022,12 @@ class MicroscopeApp(QWidget):
             painter.setPen(QPen(Qt.green, 2, Qt.SolidLine))
             p1 = self.current_points[0]
             painter.drawEllipse(p1, 3, 3)
-            if len(self.current_points) == 2: # (이 상태는 거의 없어야 하지만, 안전장치)
+            if len(self.current_points) == 2:
                 p2 = self.current_points[1]
                 painter.drawEllipse(p2, 3, 3)
                 painter.drawLine(p1, p2)
 
         painter.end()
-        # [수정] self.current_pixmap을 최종 결과물로 교체
         self.current_pixmap = pixmap_copy
             
     def closeEvent(self, event):
@@ -1119,24 +1035,46 @@ class MicroscopeApp(QWidget):
             self.thread.stop()
         event.accept()
 
+    # --- [핵심 수정] 모든 단축키를 keyPressEvent로 통합 ---
     def keyPressEvent(self, event):
-        if event.modifiers() == Qt.ControlModifier and event.key() == Qt.Key_O:
-            self.toggle_camera()
-            event.accept()
-            return
-
+        
+        # 1. Non-Ctrl modifiers (like F1)
         if event.key() == Qt.Key_F1:
             self.pause_video()
             event.accept()
             return
-        
-        # [수정] 누락되었던 Ctrl+0 (줌 리셋) 단축키 추가
-        if event.modifiers() == Qt.ControlModifier and event.key() == Qt.Key_0:
-            self.reset_zoom()
-            event.accept()
+
+        # 2. Check for Ctrl modifier
+        if event.modifiers() == Qt.ControlModifier:
+            key = event.key()
+            
+            if key == Qt.Key_O:
+                self.toggle_camera()
+            elif key == Qt.Key_J:
+                self.reset_zoom()
+            elif key == Qt.Key_S:
+                self.capture_image()
+            elif key == Qt.Key_D:
+                self.toggle_classification()
+            elif key == Qt.Key_Z:
+                # toggle_zoom_mode는 체크박스 상태를 반전시키므로 .click() 호출
+                self.btn_zoom_mode.click() 
+            elif key == Qt.Key_R:
+                self.start_calibration()
+            elif key == Qt.Key_M:
+                self.start_measurement()
+            elif key == Qt.Key_I:    # Ctrl+I
+                self.zoom_in_button()
+            elif key == Qt.Key_K:  # Ctrl+K
+                self.zoom_out_button()
+            else:
+                super().keyPressEvent(event) # Pass unhandled keys
+                return
+            
+            event.accept() # Mark as handled
             return
 
-        super().keyPressEvent(event)
+        super().keyPressEvent(event) # Pass all other key events
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
